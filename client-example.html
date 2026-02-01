@@ -1,0 +1,437 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Cliente WebSocket - Productos</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+            background: #f5f5f5;
+            padding: 20px;
+        }
+
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            background: white;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            padding: 20px;
+        }
+
+        h1 {
+            color: #333;
+            margin-bottom: 20px;
+        }
+
+        .connection-status {
+            padding: 10px;
+            border-radius: 4px;
+            margin-bottom: 20px;
+            font-weight: bold;
+        }
+
+        .connected {
+            background: #d4edda;
+            color: #155724;
+        }
+
+        .disconnected {
+            background: #f8d7da;
+            color: #721c24;
+        }
+
+        .section {
+            margin-bottom: 30px;
+        }
+
+        .section h2 {
+            color: #555;
+            margin-bottom: 15px;
+            font-size: 1.2em;
+        }
+
+        .form-group {
+            margin-bottom: 15px;
+        }
+
+        label {
+            display: block;
+            margin-bottom: 5px;
+            color: #666;
+            font-weight: 500;
+        }
+
+        input, textarea {
+            width: 100%;
+            padding: 10px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            font-size: 14px;
+        }
+
+        textarea {
+            min-height: 80px;
+            resize: vertical;
+        }
+
+        button {
+            background: #007bff;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 14px;
+            font-weight: 500;
+        }
+
+        button:hover {
+            background: #0056b3;
+        }
+
+        button:disabled {
+            background: #ccc;
+            cursor: not-allowed;
+        }
+
+        .product-list {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+            gap: 15px;
+        }
+
+        .product-card {
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            padding: 15px;
+            background: #fafafa;
+        }
+
+        .product-card h3 {
+            color: #333;
+            margin-bottom: 10px;
+        }
+
+        .product-card p {
+            margin: 5px 0;
+            color: #666;
+        }
+
+        .product-card .price {
+            font-size: 1.2em;
+            color: #28a745;
+            font-weight: bold;
+        }
+
+        .events-log {
+            background: #f8f9fa;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            padding: 15px;
+            max-height: 400px;
+            overflow-y: auto;
+        }
+
+        .event-item {
+            padding: 10px;
+            margin-bottom: 10px;
+            border-left: 4px solid #007bff;
+            background: white;
+            border-radius: 2px;
+        }
+
+        .event-item.created {
+            border-left-color: #28a745;
+        }
+
+        .event-item.updated {
+            border-left-color: #ffc107;
+        }
+
+        .event-item.deleted {
+            border-left-color: #dc3545;
+        }
+
+        .event-type {
+            font-weight: bold;
+            margin-bottom: 5px;
+        }
+
+        .event-timestamp {
+            font-size: 0.8em;
+            color: #999;
+        }
+
+        .button-group {
+            display: flex;
+            gap: 10px;
+            margin-top: 10px;
+        }
+
+        .button-group button {
+            flex: 1;
+        }
+
+        .btn-delete {
+            background: #dc3545;
+        }
+
+        .btn-delete:hover {
+            background: #c82333;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🚀 Cliente WebSocket - Productos</h1>
+
+        <div id="connectionStatus" class="connection-status disconnected">
+            ❌ Desconectado
+        </div>
+
+        <div class="section">
+            <h2>➕ Crear Producto</h2>
+            <form id="createForm">
+                <div class="form-group">
+                    <label>Nombre:</label>
+                    <input type="text" id="nombre" required>
+                </div>
+                <div class="form-group">
+                    <label>Descripción:</label>
+                    <textarea id="descripcion"></textarea>
+                </div>
+                <div class="form-group">
+                    <label>Precio:</label>
+                    <input type="number" id="precio" step="0.01" min="0" required>
+                </div>
+                <div class="form-group">
+                    <label>Stock:</label>
+                    <input type="number" id="stock" min="0" value="0">
+                </div>
+                <button type="submit">Crear Producto</button>
+            </form>
+        </div>
+
+        <div class="section">
+            <h2>📦 Productos</h2>
+            <button onclick="loadProducts()">🔄 Recargar Productos</button>
+            <div id="productList" class="product-list" style="margin-top: 15px;"></div>
+        </div>
+
+        <div class="section">
+            <h2>📡 Eventos WebSocket en Tiempo Real</h2>
+            <div id="eventsLog" class="events-log"></div>
+        </div>
+    </div>
+
+    <script>
+        const API_URL = 'http://localhost:3000/api/productos';
+        const WS_URL = 'ws://localhost:3000';
+
+        let ws;
+        const eventsLog = document.getElementById('eventsLog');
+        const connectionStatus = document.getElementById('connectionStatus');
+        const productList = document.getElementById('productList');
+
+        // Conectar WebSocket
+        function connectWebSocket() {
+            ws = new WebSocket(WS_URL);
+
+            ws.onopen = () => {
+                connectionStatus.textContent = '✅ Conectado al WebSocket';
+                connectionStatus.className = 'connection-status connected';
+                addEventToLog('Conexión establecida', 'info');
+            };
+
+            ws.onmessage = (event) => {
+                const message = JSON.parse(event.data);
+                handleWebSocketMessage(message);
+            };
+
+            ws.onclose = () => {
+                connectionStatus.textContent = '❌ Desconectado';
+                connectionStatus.className = 'connection-status disconnected';
+                addEventToLog('Conexión cerrada. Reconectando...', 'info');
+                setTimeout(connectWebSocket, 3000);
+            };
+
+            ws.onerror = (error) => {
+                console.error('Error WebSocket:', error);
+            };
+        }
+
+        // Manejar mensajes WebSocket
+        function handleWebSocketMessage(message) {
+            const { type, data, timestamp } = message;
+
+            switch(type) {
+                case 'CONNECTION_ESTABLISHED':
+                    addEventToLog('Conexión establecida con el servidor', 'info');
+                    loadProducts();
+                    break;
+                case 'PRODUCT_CREATED':
+                    addEventToLog(`Producto creado: ${data.nombre}`, 'created', data);
+                    loadProducts();
+                    break;
+                case 'PRODUCT_UPDATED':
+                    addEventToLog(`Producto actualizado: ${data.nombre}`, 'updated', data);
+                    loadProducts();
+                    break;
+                case 'PRODUCT_DELETED':
+                    addEventToLog(`Producto eliminado (ID: ${data.id})`, 'deleted', data);
+                    loadProducts();
+                    break;
+            }
+        }
+
+        // Agregar evento al log
+        function addEventToLog(message, type, data = null) {
+            const eventItem = document.createElement('div');
+            eventItem.className = `event-item ${type}`;
+
+            let content = `
+                <div class="event-type">${message}</div>
+                <div class="event-timestamp">${new Date().toLocaleTimeString()}</div>
+            `;
+
+            if (data) {
+                content += `<pre style="margin-top: 10px; font-size: 0.9em;">${JSON.stringify(data, null, 2)}</pre>`;
+            }
+
+            eventItem.innerHTML = content;
+            eventsLog.insertBefore(eventItem, eventsLog.firstChild);
+        }
+
+        // Cargar productos
+        async function loadProducts() {
+            try {
+                const response = await fetch(API_URL);
+                const result = await response.json();
+
+                if (result.success) {
+                    displayProducts(result.data);
+                }
+            } catch (error) {
+                console.error('Error cargando productos:', error);
+            }
+        }
+
+        // Mostrar productos
+        function displayProducts(products) {
+            productList.innerHTML = products.map(product => `
+                <div class="product-card">
+                    <h3>${product.nombre}</h3>
+                    <p>${product.descripcion || 'Sin descripción'}</p>
+                    <p class="price">$${product.precio}</p>
+                    <p>Stock: ${product.stock} unidades</p>
+                    <p style="font-size: 0.8em; color: #999;">ID: ${product.id}</p>
+                    <div class="button-group">
+                        <button onclick="editProduct(${product.id})">✏️ Editar</button>
+                        <button class="btn-delete" onclick="deleteProduct(${product.id})">🗑️ Eliminar</button>
+                    </div>
+                </div>
+            `).join('');
+        }
+
+        // Crear producto
+        document.getElementById('createForm').addEventListener('submit', async (e) => {
+            e.preventDefault();
+
+            const productData = {
+                nombre: document.getElementById('nombre').value,
+                descripcion: document.getElementById('descripcion').value,
+                precio: parseFloat(document.getElementById('precio').value),
+                stock: parseInt(document.getElementById('stock').value)
+            };
+
+            try {
+                const response = await fetch(API_URL, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(productData)
+                });
+
+                const result = await response.json();
+
+                if (result.success) {
+                    document.getElementById('createForm').reset();
+                    alert('✅ Producto creado exitosamente');
+                } else {
+                    alert('❌ Error: ' + result.error);
+                }
+            } catch (error) {
+                console.error('Error:', error);
+                alert('❌ Error al crear el producto');
+            }
+        });
+
+        // Editar producto
+        async function editProduct(id) {
+            const nombre = prompt('Nuevo nombre:');
+            if (!nombre) return;
+
+            const descripcion = prompt('Nueva descripción:');
+            const precio = parseFloat(prompt('Nuevo precio:'));
+            const stock = parseInt(prompt('Nuevo stock:'));
+
+            if (isNaN(precio) || isNaN(stock)) {
+                alert('❌ Precio y stock deben ser números válidos');
+                return;
+            }
+
+            try {
+                const response = await fetch(`${API_URL}/${id}`, {
+                    method: 'PUT',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ nombre, descripcion, precio, stock })
+                });
+
+                const result = await response.json();
+
+                if (result.success) {
+                    alert('✅ Producto actualizado');
+                } else {
+                    alert('❌ Error: ' + result.error);
+                }
+            } catch (error) {
+                console.error('Error:', error);
+                alert('❌ Error al actualizar el producto');
+            }
+        }
+
+        // Eliminar producto
+        async function deleteProduct(id) {
+            if (!confirm('¿Estás seguro de eliminar este producto?')) return;
+
+            try {
+                const response = await fetch(`${API_URL}/${id}`, {
+                    method: 'DELETE'
+                });
+
+                const result = await response.json();
+
+                if (result.success) {
+                    alert('✅ Producto eliminado');
+                } else {
+                    alert('❌ Error: ' + result.error);
+                }
+            } catch (error) {
+                console.error('Error:', error);
+                alert('❌ Error al eliminar el producto');
+            }
+        }
+
+        // Iniciar conexión WebSocket al cargar la página
+        connectWebSocket();
+        loadProducts();
+    </script>
+</body>
+</html>
